@@ -32,11 +32,24 @@
 
 # This function is executed once at init time
 function init() {
+    if(id % 4 == 0){
+        role = "shepherd"
+    }
+    else{
+        role = "sheep"
+        set_leds(255, 255, 255)
+    }
 }
 
 # This function is executed at each time step
 # The main loop is controller by ARGoS
 function step() {
+    if(role == "shepherd"){
+
+    }
+    else{
+    
+    }
 }
 
 # This function is executed when you press the reset button
