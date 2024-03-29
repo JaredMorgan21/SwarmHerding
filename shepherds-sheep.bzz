@@ -32,23 +32,107 @@
 
 # This function is executed once at init time
 function init() {
-    if(id % 4 == 0){
-        role = "shepherd"
-    }
-    else{
-        role = "sheep"
+    math.rng.setseed(id)
+
+    shepherds = swarm.create(0)
+    shepherds.select(id % 4 == 0)
+    sheep = shepherds.others(1)
+
+    sheep.exec(function(){
         set_leds(255, 255, 255)
-    }
+    })
 }
 
 # This function is executed at each time step
 # The main loop is controller by ARGoS
 function step() {
-    if(role == "shepherd"){
+    shepherds.exec(shepherdControl)
+    sheep.exec(sheepControl)
+}
 
+function shepherdControl() {
+    set_wheels(10.0, 10.0)
+}
+
+function sheepControl() {
+    # clustering
+    cluster()
+    # obstacle avoidance
+    avoidObstacles()
+    # shepherd avoidance
+    avoidShepherds()
+}
+
+function cluster(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.kin().foreach(function(robot_id, sheep){
+        v.x = v.x + sheep.distance * math.cos(sheep.azimuth)
+        v.y = v.y + sheep.distance * math.sin(sheep.azimuth)
+    })
+
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(neighbors.count() > 0){
+        v.x = v.x / neighbors.count()
+        v.y = v.y / neighbors.count()
+        norm = norm / neighbors.count()
+    }
+
+    if (norm > 20){
+        goto(v.x, v.y)
+        debug.rays.add(0, 140, 0, v.x/100, v.y/100, 1.0)
     }
     else{
-    
+        set_wheels(math.rng.uniform(0.0, 20.0), math.rng.uniform(-20.0, 0.0))
+    }
+}
+
+function avoidObstacles(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    i = 0
+    while(i < 8){
+        v.x = v.x + proximity[i].value * math.cos(proximity[i].angle)
+        v.y = v.y + proximity[i].value * math.sin(proximity[i].angle)
+        i = i + 1
+    }
+
+    # if norm of v is less than threshold continue straight, otherwise turn away
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(norm > 0.8 and (proximity[0].value > 0 or proximity[7].value > 0 or proximity[1].value > 0)){
+        set_wheels(5.0, -5.0)
+    }
+}
+
+function avoidShepherds(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.nonkin().foreach(function(robot_id, shepherd){
+        shepX = shepherd.distance * math.cos(shepherd.azimuth)
+        shepY = shepherd.distance * math.sin(shepherd.azimuth)
+
+        norm = math.sqrt(shepX^2 + shepY^2)
+
+        if(norm < 50){
+            debug.print(norm)
+            v.x = v.x + shepX
+            v.y = v.y + shepY
+        }
+    })
+
+    if(v.x != 0 and v.y != 0){
+        goto(-v.x, -v.y)
     }
 }
 
