@@ -84,6 +84,14 @@ footbot_wheels [default]
       -->
       <sensors>
         <kheperaiv_proximity implementation="default" show_rays="true" />
+        <cameras implementation="default" show_frustum="true">
+          <camera id="camera0" range="0.025:0.25" anchor="origin"
+                  position="0.1,0,0.1" orientation="90,-90,0"
+                  focal_length="800,800" principal_point="320,240"
+                  resolution="640,480">
+             <led_detector medium="leds" show_rays="true"/>
+          </camera>
+        </cameras>
         <range_and_bearing   implementation="medium" medium="rab"
                              show_rays="true" noise_std_dev="0" />
         <positioning         implementation="default" />
@@ -166,10 +174,20 @@ $ argos3 -q box
         standard deviation is 360 degrees.
     -->
     <distribute>
-      <position method="uniform" min="-2,-2,0" max="2,0.1,0" />
+      <position method="uniform" min="-0.5,-2,0" max="0.5,-1,0" />
+      <orientation method="gaussian" mean="0,0,0" std_dev="360,0,0"/>
+      <entity quantity="20" max_trials="100">
+        <kheperaiv id="sheep" rab_data_size="1000" rab_range="0.8">
+          <controller config="sync" />
+        </kheperaiv>
+      </entity>
+    </distribute>
+    
+    <distribute>
+      <position method="uniform" min="-2,-1,0" max="2,0,0" />
       <orientation method="gaussian" mean="0,0,0" std_dev="360,0,0" />
-      <entity quantity="30" max_trials="100">
-        <kheperaiv id="kiv" rab_data_size="1000">
+      <entity quantity="10" max_trials="100" base_num="20">
+        <kheperaiv id="shepherds" rab_data_size="1000" rab_range="0.8">
           <controller config="sync" />
         </kheperaiv>
       </entity>

@@ -15,8 +15,7 @@
 # Compiling and running the code
 #
 # - In the ARGoS window: Pause the simulation (if it's not paused already)
-# - In the editor: do what you need, save, press the "Execute" button
-# - In the ARGoS window: Press the "Play", "Step", or "Fast Forward" buttons
+# - In the editor: do what you need, save, press the "Execute" button# - In the ARGoS window: Press the "Play", "Step", or "Fast Forward" buttons
 #
 
 #
@@ -32,11 +31,47 @@
 
 # This function is executed once at init time
 function init() {
+    D = 50
+    d = 20
+    EPSILON = 500.0
+    anchor = {
+        .x = 0,
+        .y = 0,
+        .ang = 0
+    }
+
     math.rng.setseed(id)
 
     shepherds = swarm.create(0)
-    shepherds.select(id % 4 == 0)
+    shepherds.select(id >= 20)
     sheep = shepherds.others(1)
+
+    shepherds.exec(function(){
+        state = "searching"
+
+        var anchor_norm = 10000
+
+        neighbors.listen("sheep found",
+            function(top, val, nid){
+                if (state == "searching"){
+                    state = "neighbor detection"
+                }
+                if(state == "neighbor detection"){
+                    var anchorx = neighbors.get(nid).distance * math.cos(neighbors.get(nid).azimuth)
+                    var anchory = neighbors.get(nid).distance * math.sin(neighbors.get(nid).azimuth)
+                    var ang = neighbors.get(nid).azimuth
+
+                    var norm = math.sqrt(anchorx^2 + anchory^2)
+
+                    if(norm < anchor_norm){
+                        anchor.x = anchorx
+                        anchor.y = anchory
+                        anchor.ang = ang
+                    }
+                }
+            }
+        )
+    })
 
     sheep.exec(function(){
         set_leds(255, 255, 255)
@@ -51,7 +86,21 @@ function step() {
 }
 
 function shepherdControl() {
-    set_wheels(10.0, 10.0)
+    debug.print(state)
+    if(state == "searching"){
+        set_wheels(10.0, 10.0)
+        findSheep()
+        avoidObstacles()
+    }
+    if(state == "neighbor detection"){
+        findSpace()
+        avoidObstacles()
+    }
+    if(state == "found"){
+        hexagon()
+        neighbors.broadcast("sheep found", 0)
+    }
+
 }
 
 function sheepControl() {
@@ -61,6 +110,83 @@ function sheepControl() {
     avoidObstacles()
     # shepherd avoidance
     avoidShepherds()
+}
+
+function findSpace(){
+    findSheep()
+    gravityMovement()
+}
+
+function gravityMovement(){
+    omega = 0.3
+
+    if(anchor.ang > 0){
+        set_wheels(omega*(D - 14/2), omega*(D + 14/2))
+    }
+    else{
+        set_wheels(omega*(D + 14/2), omega*(D - 14/2))
+    }
+
+    debug.print(anchor.ang)
+
+}
+
+# Lennard-Jones interaction magnitude
+function lj_magnitude(dist, target, epsilon) {
+    return -(epsilon / dist) * ((target / dist)^4 - (target / dist)^2)
+}
+
+# Neighbor data to LJ interaction vector
+function lj_vector(rid, data) {
+    return {
+        .x = lj_magnitude(data.distance, D, EPSILON) * math.cos(data.azimuth),
+        .y = lj_magnitude(data.distance, D, EPSILON) * math.sin(data.azimuth)
+    }
+}
+
+# Accumulator of neighbor LJ interactions
+function lj_sum(rid, data, accum) {
+    return {
+        .x = data.x + accum.x,
+        .y = data.y + accum.y
+    }
+}
+
+# Calculates and actuates the flocking interaction
+function hexagon() {
+    # Calculate accumulator
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+    var accum = neighbors.map(lj_vector).reduce(lj_sum, v)
+    if(neighbors.count() > 0){
+        accum.x = accum.x * 1.0 / neighbors.count()
+        accum.y = accum.y * 1.0 / neighbors.count()
+    }
+    # Move according to vector
+    goto(accum.x, accum.y)
+
+}
+
+function findSheep(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.nonkin().foreach(function(robot_id, sheep){
+        v.x = sheep.distance * math.cos(sheep.azimuth)
+        v.y = sheep.distance * math.sin(sheep.azimuth)
+
+        norm = math.sqrt(v.x^2 + v.y^2)
+        debug.print(norm)
+
+        if(norm < D){
+            state = "found"
+            set_wheels(0.0, 0.0)
+        }
+    })
 }
 
 function cluster(){
@@ -82,7 +208,7 @@ function cluster(){
         norm = norm / neighbors.count()
     }
 
-    if (norm > 20){
+    if (norm > d){
         goto(v.x, v.y)
         debug.rays.add(0, 140, 0, v.x/100, v.y/100, 1.0)
     }
@@ -124,7 +250,7 @@ function avoidShepherds(){
 
         norm = math.sqrt(shepX^2 + shepY^2)
 
-        if(norm < 50){
+        if(norm < D){
             debug.print(norm)
             v.x = v.x + shepX
             v.y = v.y + shepY
