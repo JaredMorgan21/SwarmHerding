@@ -174,7 +174,7 @@ $ argos3 -q box
         standard deviation is 360 degrees.
     -->
     <distribute>
-      <position method="uniform" min="-0.5,-2,0" max="0.5,-1,0" />
+      <position method="uniform" min="-0.5,-1,0" max="0.5,-0,0" />
       <orientation method="gaussian" mean="0,0,0" std_dev="360,0,0"/>
       <entity quantity="20" max_trials="100">
         <kheperaiv id="sheep" rab_data_size="1000" rab_range="0.8">
@@ -184,9 +184,9 @@ $ argos3 -q box
     </distribute>
     
     <distribute>
-      <position method="uniform" min="-2,-1,0" max="2,0,0" />
+      <position method="uniform" min="-2,-2,0" max="2,-1,0" />
       <orientation method="gaussian" mean="0,0,0" std_dev="360,0,0" />
-      <entity quantity="10" max_trials="100" base_num="20">
+      <entity quantity="12" max_trials="100" base_num="20">
         <kheperaiv id="shepherds" rab_data_size="1000" rab_range="0.8">
           <controller config="sync" />
         </kheperaiv>

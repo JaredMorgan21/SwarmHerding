@@ -31,8 +31,11 @@
 
 # This function is executed once at init time
 function init() {
+    anchor_norm = 10000
     D = 50
     d = 20
+    error = 0.3
+
     EPSILON = 500.0
     anchor = {
         .x = 0,
@@ -49,8 +52,6 @@ function init() {
     shepherds.exec(function(){
         state = "searching"
 
-        var anchor_norm = 10000
-
         neighbors.listen("sheep found",
             function(top, val, nid){
                 if (state == "searching"){
@@ -64,10 +65,16 @@ function init() {
                     var norm = math.sqrt(anchorx^2 + anchory^2)
 
                     if(norm < anchor_norm){
+                        anchor_norm = norm
                         anchor.x = anchorx
                         anchor.y = anchory
                         anchor.ang = ang
                     }
+
+#                    log("robot ", nid, ": ",
+#                        "distance  = ", neighbors.get(nid).distance, ", ",
+#                        "azimuth   = ", neighbors.get(nid).azimuth, ", ",
+#                        "anchor norm = ", anchor_norm)
                 }
             }
         )
@@ -76,13 +83,18 @@ function init() {
     sheep.exec(function(){
         set_leds(255, 255, 255)
     })
+
+    count = 0
 }
 
 # This function is executed at each time step
 # The main loop is controller by ARGoS
 function step() {
-    shepherds.exec(shepherdControl)
-    sheep.exec(sheepControl)
+    if(count > 10){
+        shepherds.exec(shepherdControl)
+        sheep.exec(sheepControl)
+    }
+    count = count + 1
 }
 
 function shepherdControl() {
@@ -92,15 +104,16 @@ function shepherdControl() {
         findSheep()
         avoidObstacles()
     }
-    if(state == "neighbor detection"){
+    else if(state == "neighbor detection"){
         findSpace()
         avoidObstacles()
     }
-    if(state == "found"){
+    else if(state == "found"){
         hexagon()
         neighbors.broadcast("sheep found", 0)
     }
 
+    anchor_norm = 10000
 }
 
 function sheepControl() {
@@ -118,17 +131,15 @@ function findSpace(){
 }
 
 function gravityMovement(){
-    omega = 0.3
+    var omega = 0.3
+    var dist = math.sqrt(anchor.x^2 + anchor.y^2)
 
-    if(anchor.ang > 0){
-        set_wheels(omega*(D - 14/2), omega*(D + 14/2))
-    }
-    else{
-        set_wheels(omega*(D + 14/2), omega*(D - 14/2))
-    }
+    debug.print(dist, " ", anchor.ang)
 
-    debug.print(anchor.ang)
+    vl = omega*(D - 14/2) + 0.5*(D - dist) + 10*(math.pi/2 - anchor.ang)
+    vr = omega*(D + 14/2) - 0.5*(D - dist) - 10*(math.pi/2 - anchor.ang)
 
+    set_wheels(vl, vr)
 }
 
 # Lennard-Jones interaction magnitude
@@ -139,8 +150,8 @@ function lj_magnitude(dist, target, epsilon) {
 # Neighbor data to LJ interaction vector
 function lj_vector(rid, data) {
     return {
-        .x = lj_magnitude(data.distance, D, EPSILON) * math.cos(data.azimuth),
-        .y = lj_magnitude(data.distance, D, EPSILON) * math.sin(data.azimuth)
+        .x = lj_magnitude(data.distance, D + error, EPSILON) * math.cos(data.azimuth),
+        .y = lj_magnitude(data.distance, D + error, EPSILON) * math.sin(data.azimuth)
     }
 }
 
@@ -175,6 +186,7 @@ function findSheep(){
         .y = 0
     }
 
+    nk = ""
     neighbors.nonkin().foreach(function(robot_id, sheep){
         v.x = sheep.distance * math.cos(sheep.azimuth)
         v.y = sheep.distance * math.sin(sheep.azimuth)
@@ -182,11 +194,13 @@ function findSheep(){
         norm = math.sqrt(v.x^2 + v.y^2)
         debug.print(norm)
 
-        if(norm < D){
+        if(norm < D + error){
             state = "found"
             set_wheels(0.0, 0.0)
         }
+        nk = string.concat(nk, string.tostring(robot_id), " ")
     })
+    debug.print(nk)
 }
 
 function cluster(){
@@ -264,6 +278,12 @@ function avoidShepherds(){
 
 # This function is executed when you press the reset button
 function reset() {
+    shepherds = swarm.create(0)
+    shepherds.select(id >= 20)
+    sheep = shepherds.others(1)
+    shepherds.exec(function(){
+        state = "searching"
+    })
 }
 
 # This function is executed once when you close the simulator
