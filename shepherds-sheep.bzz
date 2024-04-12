@@ -51,6 +51,7 @@ function init() {
 
     shepherds.exec(function(){
         state = "searching"
+        count = 0
 
         neighbors.listen("sheep found",
             function(top, val, nid){
@@ -70,11 +71,6 @@ function init() {
                         anchor.y = anchory
                         anchor.ang = ang
                     }
-
-#                    log("robot ", nid, ": ",
-#                        "distance  = ", neighbors.get(nid).distance, ", ",
-#                        "azimuth   = ", neighbors.get(nid).azimuth, ", ",
-#                        "anchor norm = ", anchor_norm)
                 }
             }
         )
@@ -111,6 +107,7 @@ function shepherdControl() {
     else if(state == "found"){
         hexagon()
         neighbors.broadcast("sheep found", 0)
+        set_leds(0, 150, 0)
     }
 
     anchor_norm = 10000
@@ -136,9 +133,14 @@ function gravityMovement(){
 
     debug.print(dist, " ", anchor.ang)
 
-    vl = omega*(D - 14/2) + 0.5*(D - dist) + 10*(math.pi/2 - anchor.ang)
-    vr = omega*(D + 14/2) - 0.5*(D - dist) - 10*(math.pi/2 - anchor.ang)
-
+    if(anchor.ang > 0){
+        vl = omega*(D - 14/2) + 0.5*(D - dist) + 10*(math.pi/2 - anchor.ang)
+        vr = omega*(D + 14/2) - 0.5*(D - dist) - 10*(math.pi/2 - anchor.ang)
+    }
+    else{
+        vl = omega*(D + 14/2) - 0.5*(D - dist) + 10*(-math.pi/2 - anchor.ang)
+        vr = omega*(D - 14/2) + 0.5*(D - dist) - 10*(-math.pi/2 - anchor.ang)
+    }
     set_wheels(vl, vr)
 }
 
@@ -265,7 +267,7 @@ function avoidShepherds(){
         norm = math.sqrt(shepX^2 + shepY^2)
 
         if(norm < D){
-            debug.print(norm)
+#            debug.print(norm)
             v.x = v.x + shepX
             v.y = v.y + shepY
         }
