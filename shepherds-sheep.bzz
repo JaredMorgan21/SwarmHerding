@@ -60,6 +60,7 @@ function init() {
     shepherds.exec(function(){
         state = "searching"
         count = 0
+        foundCount = 0
         aligningCounter = 0
 
         neighbors.listen("sheep found",
@@ -109,7 +110,10 @@ function init() {
 
         neighbors.listen("align", function(top, val, nid){
             if(state == "found" and id != val){
-                log(id)
+                print = ""
+                foreach(prevFound, function(key, value){print = string.concat(print, string.tostring(value), " ")})
+                log("ID: ", id, " Neighbors: ", print)
+
                 state = "aligning"
                 neighbors.broadcast("align", -1)
                 turnNeighbor = nid
@@ -125,18 +129,34 @@ function init() {
                 if(state == "aligning" and val.from != id and val.ig != id){
                     if(val.orig == id){
                         log("Completed! COMx: ", val.neighborX, " COMy: ", val.neighborY, " count: ", val.count)
-                        COMx = val.neighborX / count
-                        COMy = val.neighborY / count
                         count = val.count
+                        COMx = val.COMx / count
+                        COMy = val.COMy / count
                         neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
                         state = "movement"
                     }
                     else{
-                        log("ID: ", id, " COMx: ", val.neighborX, " COMy: ", val.neighborY, " count: ", val.count)
-                        neighbors.broadcast("COM", {.orig = val.orig, .from = nid,
-                            .neighborX = val.neighborX + neighbors.get(nid).distance * math.cos(neighbors.get(nid).azimuth + val.neighborAng),
-                            .neighborY = val.neighborY + neighbors.get(nid).distance * math.sin(neighbors.get(nid).azimuth + val.neighborAng),
-                            .neighborAng = val.neighborAng + neighbors.get(nid).azimuth,
+                        foreach(prevFound, function(key, value){if(value != nid){neighborAng = neighbors.get(value).azimuth}})
+
+                        neighborX = neighbors.get(nid).distance * math.cos(val.neighborAng)
+                        neighborY = neighbors.get(nid).distance * math.sin(val.neighborAng)
+
+#                        log("ID: ", id, " neighborAng: ", neighborAng, " Received: ", val.neighborAng)
+#                        log(type(neighborAng), " ", type(val.neighborAng))
+                        newAng = -(val.neighborAng - neighborAng)
+
+                        log("ID: ", id, " COMx: ", val.COMx, " COMy: ", val.COMy, " Nx: ", neighborX, " Ny: ", neighborY, " newAng: ", newAng, " from: ", val.from, " ignore: ", val.ig)
+
+                        neighbors.broadcast("COM",
+                        {
+                            .orig = val.orig,
+                            .from = nid,
+                            .ig = id,
+                            .neighborX = neighborX,
+                            .neighborY = neighborY,
+                            .neighborAng = newAng,
+                            .COMx = val.COMx + neighborX,
+                            .COMy = val.COMy + neighborY,
                             .count = val.count + 1})
                     }
                 }
@@ -146,7 +166,7 @@ function init() {
         neighbors.listen("COM sharing",
             function(top, val, nid){
                 if(state == "aligning"){
-                    log("Received ", id)
+#                    log("Received ", id)
                     COMx = val.COMx
                     COMy = val.COMy
                     neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
@@ -188,19 +208,32 @@ function shepherdControl() {
         hexagon()
         neighbors.broadcast("sheep found", 0)
         set_leds(0, 150, 0)
+        if(foundCount == 10){
+            neighbors.broadcast("complete?", {.orig = id, .from = id})
+            foundCount = foundCount + 1
+        }
+        else{
+            foundCount = foundCount + 1
+        }
         if(neighbors.nonkin().count() == 0){
             set_leds(0, 0, 0)
             state = "searching"
         }
     }
     else if(state == "aligning"){
+        neighbors.broadcast("sheep found", 0)
+
         if(turnNeighbor != -1){
             debug.print(turnNeighbor)
             set_wheels(10.0*-neighbors.get(turnNeighbor).azimuth, 10.0*neighbors.get(turnNeighbor).azimuth)
         }
         else if(aligningCounter > 20){
-            foreach(foundNeighbors, function(key, value){sendNeighbor = value})
-            neighbors.broadcast("COM", {.orig = id, .from = id, .ig = sendNeighbor, .neighborX = 0, .neighborY = 0, .neighborAng = 0, .count = 1})
+            foreach(foundNeighbors, function(key, value){igNeighbor = value})
+            foreach(foundNeighbors, function(key, value){if(value != igNeighbor){neighborAng = neighbors.get(value).azimuth}})
+
+            neighbors.broadcast("COM", {.orig = id, .from = id, .ig = igNeighbor,
+                .neighborX = 0, .neighborY = 0, .neighborAng = neighborAng,
+                .COMx = 0, .COMy = 0, .count = 1})
         }
         else{
             aligningCounter = aligningCounter + 1
@@ -209,14 +242,20 @@ function shepherdControl() {
     }
     else if(state == "movement"){
         set_wheels(0.0, 0.0)
-        debug.rays.add(170, 0, 30, COMx, COMy, 1.0)
+        debug.rays.add(170, 0, 30, COMx/100, COMy/100, 1.0)
     }
 
     anchor_norm = 10000
-    if(state != "aligning"){
+    if(state != "aligning" and state != "movement"){
         prevFound = foundNeighbors
         foundNeighbors = {}
     }
+
+#    if(id == 27){
+#        print = ""
+#        foreach(prevFound, function(key, value){print = string.concat(print, string.tostring(value), " ")})
+#        log(print)
+#    }
 }
 
 function sheepControl() {
@@ -304,7 +343,6 @@ function findSheep(){
 
         if(norm < D + error){
             state = "found"
-            neighbors.broadcast("complete?", {.orig = id, .from = id})
             set_wheels(0.0, 0.0)
         }
         nk = string.concat(nk, string.tostring(robot_id), " ")
