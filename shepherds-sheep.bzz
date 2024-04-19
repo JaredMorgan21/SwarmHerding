@@ -32,9 +32,17 @@
 # This function is executed once at init time
 function init() {
     anchor_norm = 10000
+    foundNeighbors = {}
+    prevFound = {}
+    turnNeighbor = -1
+
     D = 50
-    d = 20
-    error = 0.3
+    d = 30
+    error = 3
+
+    COMx = 0.0
+    COMy = 0.0
+    circleSize = 1
 
     EPSILON = 500.0
     anchor = {
@@ -43,7 +51,7 @@ function init() {
         .ang = 0
     }
 
-    math.rng.setseed(id)
+    math.rng.setseed(1000*id)
 
     shepherds = swarm.create(0)
     shepherds.select(id >= 20)
@@ -52,6 +60,7 @@ function init() {
     shepherds.exec(function(){
         state = "searching"
         count = 0
+        aligningCounter = 0
 
         neighbors.listen("sheep found",
             function(top, val, nid){
@@ -71,6 +80,77 @@ function init() {
                         anchor.y = anchory
                         anchor.ang = ang
                     }
+                }
+                if(state == "found"){
+                    foundNeighbors[nid] = nid
+                }
+            }
+        )
+
+        neighbors.listen("complete?",
+            function(top, val, nid){
+                if(state == "found"){
+                    if(val.from != id and size(prevFound) <= 2){
+                        if(val.orig == id and size(foundNeighbors) == 2){
+                            log("Completed! Original: ", val.orig, " From: ", val.from)
+
+                            foreach(foundNeighbors, function(key, value){sendNeighbor = value})
+                            state = "aligning"
+                            neighbors.broadcast("align", sendNeighbor)
+                            set_wheels(0.0, 0.0)
+                        }
+                        else{
+                            neighbors.broadcast("complete?", {.orig = val.orig, .from = nid})
+                        }
+                    }
+                }
+            }
+        )
+
+        neighbors.listen("align", function(top, val, nid){
+            if(state == "found" and id != val){
+                log(id)
+                state = "aligning"
+                neighbors.broadcast("align", -1)
+                turnNeighbor = nid
+            }
+            else if(state != "aligning" and state != "found"){
+                state = "dead"
+                set_wheels(0.0, 0.0)
+            }
+        })
+
+        neighbors.listen("COM",
+            function(top, val, nid){
+                if(state == "aligning" and val.from != id and val.ig != id){
+                    if(val.orig == id){
+                        log("Completed! COMx: ", val.neighborX, " COMy: ", val.neighborY, " count: ", val.count)
+                        COMx = val.neighborX / count
+                        COMy = val.neighborY / count
+                        count = val.count
+                        neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
+                        state = "movement"
+                    }
+                    else{
+                        log("ID: ", id, " COMx: ", val.neighborX, " COMy: ", val.neighborY, " count: ", val.count)
+                        neighbors.broadcast("COM", {.orig = val.orig, .from = nid,
+                            .neighborX = val.neighborX + neighbors.get(nid).distance * math.cos(neighbors.get(nid).azimuth + val.neighborAng),
+                            .neighborY = val.neighborY + neighbors.get(nid).distance * math.sin(neighbors.get(nid).azimuth + val.neighborAng),
+                            .neighborAng = val.neighborAng + neighbors.get(nid).azimuth,
+                            .count = val.count + 1})
+                    }
+                }
+            }
+        )
+
+        neighbors.listen("COM sharing",
+            function(top, val, nid){
+                if(state == "aligning"){
+                    log("Received ", id)
+                    COMx = val.COMx
+                    COMy = val.COMy
+                    neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
+                    state = "movement"
                 }
             }
         )
@@ -108,9 +188,35 @@ function shepherdControl() {
         hexagon()
         neighbors.broadcast("sheep found", 0)
         set_leds(0, 150, 0)
+        if(neighbors.nonkin().count() == 0){
+            set_leds(0, 0, 0)
+            state = "searching"
+        }
+    }
+    else if(state == "aligning"){
+        if(turnNeighbor != -1){
+            debug.print(turnNeighbor)
+            set_wheels(10.0*-neighbors.get(turnNeighbor).azimuth, 10.0*neighbors.get(turnNeighbor).azimuth)
+        }
+        else if(aligningCounter > 20){
+            foreach(foundNeighbors, function(key, value){sendNeighbor = value})
+            neighbors.broadcast("COM", {.orig = id, .from = id, .ig = sendNeighbor, .neighborX = 0, .neighborY = 0, .neighborAng = 0, .count = 1})
+        }
+        else{
+            aligningCounter = aligningCounter + 1
+            debug.print(aligningCounter)
+        }
+    }
+    else if(state == "movement"){
+        set_wheels(0.0, 0.0)
+        debug.rays.add(170, 0, 30, COMx, COMy, 1.0)
     }
 
     anchor_norm = 10000
+    if(state != "aligning"){
+        prevFound = foundNeighbors
+        foundNeighbors = {}
+    }
 }
 
 function sheepControl() {
@@ -134,12 +240,12 @@ function gravityMovement(){
     debug.print(dist, " ", anchor.ang)
 
     if(anchor.ang > 0){
-        vl = omega*(D - 14/2) + 0.5*(D - dist) + 10*(math.pi/2 - anchor.ang)
-        vr = omega*(D + 14/2) - 0.5*(D - dist) - 10*(math.pi/2 - anchor.ang)
+        vl = omega*(D + error - 14/2) + 0.5*(D + error - dist) + 10*(math.pi/2 - anchor.ang)
+        vr = omega*(D + error + 14/2) - 0.5*(D + error - dist) - 10*(math.pi/2 - anchor.ang)
     }
     else{
-        vl = omega*(D + 14/2) - 0.5*(D - dist) + 10*(-math.pi/2 - anchor.ang)
-        vr = omega*(D - 14/2) + 0.5*(D - dist) - 10*(-math.pi/2 - anchor.ang)
+        vl = omega*(D + error + 14/2) - 0.5*(D + error - dist) + 10*(-math.pi/2 - anchor.ang)
+        vr = omega*(D + error - 14/2) + 0.5*(D + error - dist) - 10*(-math.pi/2 - anchor.ang)
     }
     set_wheels(vl, vr)
 }
@@ -198,6 +304,7 @@ function findSheep(){
 
         if(norm < D + error){
             state = "found"
+            neighbors.broadcast("complete?", {.orig = id, .from = id})
             set_wheels(0.0, 0.0)
         }
         nk = string.concat(nk, string.tostring(robot_id), " ")
