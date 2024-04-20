@@ -128,35 +128,59 @@ function init() {
             function(top, val, nid){
                 if(state == "aligning" and val.from != id and val.ig != id){
                     if(val.orig == id){
-                        log("Completed! COMx: ", val.neighborX, " COMy: ", val.neighborY, " count: ", val.count)
+                        log("Completed! COMx: ", val.COMx, " COMy: ", val.COMy, " count: ", val.count)
                         count = val.count
                         COMx = val.COMx / count
-                        COMy = val.COMy / count
-                        neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
+                        COMy = -val.COMy / count
+
+                        neighbors.broadcast("COM sharing", {.neighborAng = neighborAng, .ig = igNeighbor, .COMx = COMx, .COMy = COMy})
                         state = "movement"
                     }
                     else{
-                        foreach(prevFound, function(key, value){if(value != nid){neighborAng = neighbors.get(value).azimuth}})
+                        foreach(prevFound, function(key, value){if(value != nid){
+                            neighborAng = neighbors.get(value).azimuth
+                            neighborX = neighbors.get(value).distance * math.cos(neighborAng)
+                            neighborY = neighbors.get(value).distance * math.sin(neighborAng)
+                        }})
 
-                        neighborX = neighbors.get(nid).distance * math.cos(val.neighborAng)
-                        neighborY = neighbors.get(nid).distance * math.sin(val.neighborAng)
+                        d = math.sqrt(val.origX^2 + val.origY^2)
+                        if(d != 0){
+                            alpha = math.atan(val.neighborY, (d - val.neighborX))
+                            beta = val.origAng - alpha
+                            r = math.sqrt((d - val.neighborX)^2 + val.neighborY^2)
 
-#                        log("ID: ", id, " neighborAng: ", neighborAng, " Received: ", val.neighborAng)
-#                        log(type(neighborAng), " ", type(val.neighborAng))
-                        newAng = -(val.neighborAng - neighborAng)
+#                            log("Nang: ", val.neighborAng, " Nx: ", val.neighborX, " Ny: ", val.neighborY,
+#                            " Alpha: " , alpha, " Beta: ", beta, " r: ", r, " d: ", d)
 
-                        log("ID: ", id, " COMx: ", val.COMx, " COMy: ", val.COMy, " Nx: ", neighborX, " Ny: ", neighborY, " newAng: ", newAng, " from: ", val.from, " ignore: ", val.ig)
+                            newX = r * math.cos(beta) * math.cos(val.neighborAng)
+                            newY = r * math.sin(beta) * math.sin(val.neighborAng)
+                        }
+                        else{
+                            newX = val.neighborX
+                            newY = val.neighborY
+                            beta = val.neighborAng
+                            alpha = math.pi/2 - neighborAng
+                        }
+
+                        log("ID: ", id, " COMx: ", val.COMx, " COMy: ", val.COMy,
+                            " Nx: ", newX, " Ny: ", newY, " Nang: ", beta, " Offset: ", val.neighborAng)
 
                         neighbors.broadcast("COM",
                         {
                             .orig = val.orig,
                             .from = nid,
                             .ig = id,
+
+                            .origAng = beta,
+                            .origX = newX,
+                            .origY = newY,
+
                             .neighborX = neighborX,
                             .neighborY = neighborY,
-                            .neighborAng = newAng,
-                            .COMx = val.COMx + neighborX,
-                            .COMy = val.COMy + neighborY,
+                            .neighborAng = math.pi/2 - alpha + neighborAng,
+
+                            .COMx = val.COMx + newX,
+                            .COMy = val.COMy + newY,
                             .count = val.count + 1})
                     }
                 }
@@ -165,11 +189,16 @@ function init() {
 
         neighbors.listen("COM sharing",
             function(top, val, nid){
-                if(state == "aligning"){
-#                    log("Received ", id)
-                    COMx = val.COMx
-                    COMy = val.COMy
-                    neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy})
+                if(state == "aligning" and id != val.ig){
+                    foreach(prevFound, function(key, value){if(value != nid){neighborAng = neighbors.get(value).azimuth}})
+                    r = math.sqrt(val.COMx^2 + val.COMy^2)
+                    alpha = val.neighborAng - math.atan(val.COMy, val.COMx)
+
+                    COMy = r*math.sin(alpha)
+                    COMx = neighbors.get(nid).distance - r*math.cos(alpha)
+                    log("ID: ", id, " From: ", nid, " Angle: ", val.neighborAng, " COMx: ", COMx, " COMy: ", COMy)
+
+                    neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy, .neighborAng = neighborAng})
                     state = "movement"
                 }
             }
@@ -225,15 +254,33 @@ function shepherdControl() {
 
         if(turnNeighbor != -1){
             debug.print(turnNeighbor)
-            set_wheels(10.0*-neighbors.get(turnNeighbor).azimuth, 10.0*neighbors.get(turnNeighbor).azimuth)
+            set_wheels(30.0*-neighbors.get(turnNeighbor).azimuth, 30.0*neighbors.get(turnNeighbor).azimuth)
         }
-        else if(aligningCounter > 20){
+        else if(aligningCounter == 20){
             foreach(foundNeighbors, function(key, value){igNeighbor = value})
-            foreach(foundNeighbors, function(key, value){if(value != igNeighbor){neighborAng = neighbors.get(value).azimuth}})
+            foreach(foundNeighbors, function(key, value){if(value != igNeighbor){
+                neighborAng = neighbors.get(value).azimuth
+                neighborX = neighbors.get(value).distance * math.cos(neighborAng)
+                neighborY = neighbors.get(value).distance * math.sin(neighborAng)
+            }})
 
-            neighbors.broadcast("COM", {.orig = id, .from = id, .ig = igNeighbor,
-                .neighborX = 0, .neighborY = 0, .neighborAng = neighborAng,
-                .COMx = 0, .COMy = 0, .count = 1})
+            neighbors.broadcast("COM", {
+                .orig = id,
+                .from = id,
+                .ig = igNeighbor,
+
+                .origAng = 0,
+                .origX = 0,
+                .origY = 0,
+
+                .neighborX = neighborX,
+                .neighborY = neighborY,
+                .neighborAng = neighborAng,
+
+                .COMx = 0,
+                .COMy = 0,
+                .count = 1})
+            aligningCounter = aligningCounter + 1
         }
         else{
             aligningCounter = aligningCounter + 1
