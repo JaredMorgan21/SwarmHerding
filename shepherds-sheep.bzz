@@ -44,6 +44,8 @@ function init() {
     COMy = 0.0
     circleSize = 1
 
+    count = 0
+
     EPSILON = 500.0
     anchor = {
         .x = 0,
@@ -57,9 +59,11 @@ function init() {
     shepherds.select(id >= 20)
     sheep = shepherds.others(1)
 
+    filename = string.concat("data", string.tostring(id), ".csv")
+    file = io.fopen(filename, "w")
+
     shepherds.exec(function(){
         state = "searching"
-        count = 0
         foundCount = 0
         aligningCounter = 0
 
@@ -98,6 +102,7 @@ function init() {
                             foreach(foundNeighbors, function(key, value){sendNeighbor = value})
                             state = "aligning"
                             neighbors.broadcast("align", sendNeighbor)
+                            turnNeighbor = sendNeighbor
                             set_wheels(0.0, 0.0)
                         }
                         else{
@@ -244,7 +249,21 @@ function shepherdControl() {
         else{
             foundCount = foundCount + 1
         }
-        if(neighbors.nonkin().count() == 0){
+
+        close = 0
+        neighbors.nonkin().foreach(function(robot_id, sheep){
+            x = sheep.distance * math.cos(sheep.azimuth)
+            y = sheep.distance * math.sin(sheep.azimuth)
+
+            norm = math.sqrt(x^2 + y^2)
+            debug.print(norm)
+
+            if(norm < D + 1.5*error){
+                close = 1
+            }
+        })
+
+        if(close == 0){
             set_leds(0, 0, 0)
             state = "searching"
         }
@@ -252,11 +271,9 @@ function shepherdControl() {
     else if(state == "aligning"){
         neighbors.broadcast("sheep found", 0)
 
-        if(turnNeighbor != -1){
-            debug.print(turnNeighbor)
-            set_wheels(30.0*-neighbors.get(turnNeighbor).azimuth, 30.0*neighbors.get(turnNeighbor).azimuth)
-        }
-        else if(aligningCounter == 20){
+        debug.print(turnNeighbor)
+        set_wheels(30.0*-neighbors.get(turnNeighbor).azimuth, 30.0*neighbors.get(turnNeighbor).azimuth)
+        if(turnNeighbor == sendNeighbor and aligningCounter == 30){
             foreach(foundNeighbors, function(key, value){igNeighbor = value})
             foreach(foundNeighbors, function(key, value){if(value != igNeighbor){
                 neighborAng = neighbors.get(value).azimuth
@@ -282,14 +299,16 @@ function shepherdControl() {
                 .count = 1})
             aligningCounter = aligningCounter + 1
         }
-        else{
+        else if (turnNeighbor == sendNeighbor){
             aligningCounter = aligningCounter + 1
             debug.print(aligningCounter)
         }
     }
     else if(state == "movement"){
         set_wheels(0.0, 0.0)
+        #io.fwrite(file, "COM", ",", count, ",", COMx + pose.position.x, ",", COMy + pose.position.y)
         debug.rays.add(170, 0, 30, COMx/100, COMy/100, 1.0)
+#        goto(COMx, COMy)
     }
 
     anchor_norm = 10000
@@ -298,11 +317,7 @@ function shepherdControl() {
         foundNeighbors = {}
     }
 
-#    if(id == 27){
-#        print = ""
-#        foreach(prevFound, function(key, value){print = string.concat(print, string.tostring(value), " ")})
-#        log(print)
-#    }
+    #io.fwrite(file, "shepherd", ",", count, ",", pose.position.x, ",", pose.position.y)
 }
 
 function sheepControl() {
@@ -312,6 +327,8 @@ function sheepControl() {
     avoidObstacles()
     # shepherd avoidance
     avoidShepherds()
+    # calculate true COM
+    #io.fwrite(file, "sheep", ",", count, ",", pose.position.x, ",", pose.position.y)
 }
 
 function findSpace(){
@@ -478,8 +495,11 @@ function reset() {
     shepherds.exec(function(){
         state = "searching"
     })
+
+    io.fclose(file)
 }
 
 # This function is executed once when you close the simulator
 function destroy() {
+    io.fclose(file)
 }
