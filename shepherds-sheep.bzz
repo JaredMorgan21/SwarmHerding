@@ -194,7 +194,7 @@ function init() {
 
         neighbors.listen("COM sharing",
             function(top, val, nid){
-                if(state == "aligning" and id != val.ig){
+                if((state == "aligning" and id != val.ig) and state != "dead"){
                     foreach(prevFound, function(key, value){if(value != nid){neighborAng = neighbors.get(value).azimuth}})
                     r = math.sqrt(val.COMx^2 + val.COMy^2)
                     alpha = val.neighborAng - math.atan(val.COMy, val.COMx)
