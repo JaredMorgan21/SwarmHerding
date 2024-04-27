@@ -1,0 +1,522 @@
+
+# Everything we need for sheeps
+function sheep_init(){
+    set_leds(255, 255, 255)    
+}
+
+# Everything we need for shepherds
+function shepherd_init(){
+    state = "searching"
+    foundCount = 0
+    aligningCounter = 0
+
+    # LISTEN IF NEIGHBORS FOUND SHEEP
+    neighbors.listen("sheep found",
+        function(top, val, nid){
+            if (state == "searching"){
+                state = "neighbor detection"
+            }
+            if(state == "neighbor detection"){
+                var anchorx = neighbors.get(nid).distance * math.cos(neighbors.get(nid).azimuth)
+                var anchory = neighbors.get(nid).distance * math.sin(neighbors.get(nid).azimuth)
+                var ang = neighbors.get(nid).azimuth
+
+                var norm = math.sqrt(anchorx^2 + anchory^2)
+
+                if(norm < anchor_norm){
+                    anchor_norm = norm
+                    anchor.x = anchorx
+                    anchor.y = anchory
+                    anchor.ang = ang
+                }
+            }
+            if(state == "found"){
+                foundNeighbors[nid] = nid
+            }
+        }
+    )
+    
+    # LISTEN IF NEIGHBORS ARE COMPLETE
+    neighbors.listen("complete?",
+        function(top, val, nid){
+            if(state == "found"){
+                if(val.from != id and size(prevFound) <= 2){
+                    if(val.orig == id and size(foundNeighbors) == 2){
+                        log("Completed! Original: ", val.orig, " From: ", val.from)
+
+                        foreach(foundNeighbors, function(key, value){sendNeighbor = value})
+                        state = "aligning"
+                        neighbors.broadcast("align", sendNeighbor)
+                        turnNeighbor = sendNeighbor
+                        set_wheels(0.0, 0.0)
+                    }
+                    else{
+                        neighbors.broadcast("complete?", {.orig = val.orig, .from = nid})
+                    }
+                }
+            }
+        }
+    )
+
+    # Check if the closest 2 neighbors that are shepherds are complete
+    neighbors.listen("herd_complete",
+        function(top, val, nid){
+            full_herding_complete = math.min{
+                
+                neighbors.get()
+            }
+    })
+
+
+    # LISTEN IF NEIGHBORS ARE ALIGNED
+    neighbors.listen("align", function(top, val, nid){
+        if(state == "found" and id != val){
+            print = ""
+            foreach(prevFound, function(key, value){print = string.concat(print, string.tostring(value), " ")})
+            log("ID: ", id, " Neighbors: ", print)
+
+            state = "aligning"
+            neighbors.broadcast("align", -1)
+            turnNeighbor = nid
+        }
+        else if(state != "aligning" and state != "found"){
+            state = "dead"
+            set_wheels(0.0, 0.0)
+        }
+    })
+
+    # LISTEN FOR WHAT NEIGHBORS THINK THEIR COM VALUES ARE
+    neighbors.listen("COM",
+        function(top, val, nid){
+            if(state == "aligning" and val.from != id and val.ig != id){
+                if(val.orig == id){
+                    log("Completed! COMx: ", val.COMx, " COMy: ", val.COMy, " count: ", val.count)
+                    count = val.count
+                    COMx = val.COMx / count
+                    COMy = -val.COMy / count
+
+                    neighbors.broadcast("COM sharing", {.neighborAng = neighborAng, .ig = igNeighbor, .COMx = COMx, .COMy = COMy})
+                    state = "movement"
+                }
+                else{
+                    foreach(prevFound, function(key, value){if(value != nid){
+                        neighborAng = neighbors.get(value).azimuth
+                        neighborX = neighbors.get(value).distance * math.cos(neighborAng)
+                        neighborY = neighbors.get(value).distance * math.sin(neighborAng)
+                    }})
+
+                    d = math.sqrt(val.origX^2 + val.origY^2)
+                    if(d != 0){
+                        alpha = math.atan(val.neighborY, (d - val.neighborX))
+                        beta = val.origAng - alpha
+                        r = math.sqrt((d - val.neighborX)^2 + val.neighborY^2)
+
+#                            log("Nang: ", val.neighborAng, " Nx: ", val.neighborX, " Ny: ", val.neighborY,
+#                            " Alpha: " , alpha, " Beta: ", beta, " r: ", r, " d: ", d)
+
+                        newX = r * math.cos(beta) * math.cos(val.neighborAng)
+                        newY = r * math.sin(beta) * math.sin(val.neighborAng)
+                    }
+                    else{
+                        newX = val.neighborX
+                        newY = val.neighborY
+                        beta = val.neighborAng
+                        alpha = math.pi/2 - neighborAng
+                    }
+
+                    log("ID: ", id, " COMx: ", val.COMx, " COMy: ", val.COMy,
+                        " Nx: ", newX, " Ny: ", newY, " Nang: ", beta, " Offset: ", val.neighborAng)
+
+                    neighbors.broadcast("COM",
+                    {
+                        .orig = val.orig,
+                        .from = nid,
+                        .ig = id,
+
+                        .origAng = beta,
+                        .origX = newX,
+                        .origY = newY,
+
+                        .neighborX = neighborX,
+                        .neighborY = neighborY,
+                        .neighborAng = math.pi/2 - alpha + neighborAng,
+
+                        .COMx = val.COMx + newX,
+                        .COMy = val.COMy + newY,
+                        .count = val.count + 1})
+                }
+            }
+        }
+    )
+    
+    neighbors.listen("COM sharing",
+        function(top, val, nid){
+            if((state == "aligning" and id != val.ig) and state != "dead"){
+                foreach(prevFound, function(key, value){if(value != nid){neighborAng = neighbors.get(value).azimuth}})
+                r = math.sqrt(val.COMx^2 + val.COMy^2)
+                alpha = val.neighborAng - math.atan(val.COMy, val.COMx)
+
+                COMy = r*math.sin(alpha)
+                COMx = neighbors.get(nid).distance - r*math.cos(alpha)
+                log("ID: ", id, " From: ", nid, " Angle: ", val.neighborAng, " COMx: ", COMx, " COMy: ", COMy)
+
+                neighbors.broadcast("COM sharing", {.COMx = COMx, .COMy = COMy, .neighborAng = neighborAng})
+                state = "movement"
+            }
+        }
+    )
+}
+
+
+####################################
+# Initialize both swarms
+function init() {
+    anchor_norm = 10000
+    foundNeighbors = {}
+    prevFound = {}
+    turnNeighbor = -1
+
+    D = 50
+    d = 30
+    error = 3
+
+    COMx = 0.0
+    COMy = 0.0
+    circleSize = 1
+
+    count = 0
+
+    EPSILON = 500.0
+    anchor = {
+        .x = 0,
+        .y = 0,
+        .ang = 0
+    }
+
+    
+    # CHANGE THIS VALUE FOR TESTING
+    randomizer = 1
+    math.rng.setseed(id*randomizer)
+
+    # Create Swarms
+    shepherds = swarm.create(0)
+    shepherds.select(id >= 20)
+    sheep = shepherds.others(1)
+
+    # IMPORT TO CSV 
+    #filename = string.concat("data", string.tostring(id), ".csv")
+    #file = io.fopen(filename, "w")
+
+    # initialize both swarms
+    shepherds.exec(function(){
+        shepherd_init()
+    })
+    sheep.exec(function(){
+        sheep_init()
+    })
+
+    not_complete_circle = 1
+    count = 0
+    circle_complete_count = 0
+}
+
+# TAKE A STEP
+function step() {
+    if ((count > 10) and not_complete_circle){
+        shepherds.exec(shepherdControl)
+        sheep.exec(sheepControl)
+    } 
+
+
+    count = count + 1
+}
+#####################################
+
+#### Shepherd Controls ####
+function shepherdControl() {
+    debug.print(state)
+    if(state == "searching"){
+        set_wheels(10.0, 10.0)
+        findSheep()
+        avoidObstacles()
+    }
+    else if(state == "neighbor detection"){
+        findSpace()
+        avoidObstacles()
+    }
+    else if(state == "found"){
+        hexagon()
+        neighbors.broadcast("sheep found", 0)
+        set_leds(0, 150, 0)
+        if(foundCount == 10){
+            neighbors.broadcast("complete?", {.orig = id, .from = id})
+            foundCount = foundCount + 1
+        }
+        else{
+            foundCount = foundCount + 1
+        }
+
+        close = 0
+        neighbors.nonkin().foreach(function(robot_id, sheep){
+            x = sheep.distance * math.cos(sheep.azimuth)
+            y = sheep.distance * math.sin(sheep.azimuth)
+
+            norm = math.sqrt(x^2 + y^2)
+            debug.print(norm)
+
+            if(norm < D + 1.5*error){
+                close = 1
+            }
+        })
+
+        if(close == 0){
+            set_leds(0, 0, 0)
+            state = "searching"
+        }
+    }
+    else if(state == "aligning"){
+        neighbors.broadcast("sheep found", 0)
+
+        debug.print(turnNeighbor)
+        set_wheels(30.0*-neighbors.get(turnNeighbor).azimuth, 30.0*neighbors.get(turnNeighbor).azimuth)
+        if(turnNeighbor == sendNeighbor and aligningCounter == 30){
+            foreach(foundNeighbors, function(key, value){igNeighbor = value})
+            foreach(foundNeighbors, function(key, value){if(value != igNeighbor){
+                neighborAng = neighbors.get(value).azimuth
+                neighborX = neighbors.get(value).distance * math.cos(neighborAng)
+                neighborY = neighbors.get(value).distance * math.sin(neighborAng)
+            }})
+
+            neighbors.broadcast("COM", {
+                .orig = id,
+                .from = id,
+                .ig = igNeighbor,
+
+                .origAng = 0,
+                .origX = 0,
+                .origY = 0,
+
+                .neighborX = neighborX,
+                .neighborY = neighborY,
+                .neighborAng = neighborAng,
+
+                .COMx = 0,
+                .COMy = 0,
+                .count = 1})
+            aligningCounter = aligningCounter + 1
+        }
+        else if (turnNeighbor == sendNeighbor){
+            aligningCounter = aligningCounter + 1
+            debug.print(aligningCounter)
+        }
+    }
+    else if(state == "movement"){
+        set_wheels(0.0, 0.0)
+        #io.fwrite(file, "COM", ",", count, ",", COMx + pose.position.x, ",", COMy + pose.position.y)
+        debug.rays.add(170, 0, 30, COMx/100, COMy/100, 1.0)
+#        goto(COMx, COMy)
+    }
+
+    anchor_norm = 10000
+    if(state != "aligning" and state != "movement"){
+        prevFound = foundNeighbors
+        foundNeighbors = {}
+    }
+
+    #io.fwrite(file, "shepherd", ",", count, ",", pose.position.x, ",", pose.position.y)
+}
+
+function sheepControl() {
+    # clustering
+    cluster()
+    # obstacle avoidance
+    avoidObstacles()
+    # shepherd avoidance
+    avoidShepherds()
+    # calculate true COM
+    #io.fwrite(file, "sheep", ",", count, ",", pose.position.x, ",", pose.position.y)
+}
+
+function findSpace(){
+    findSheep()
+    gravityMovement()
+}
+
+function gravityMovement(){
+    var omega = 0.3
+    var dist = math.sqrt(anchor.x^2 + anchor.y^2)
+
+    debug.print(dist, " ", anchor.ang)
+
+    if(anchor.ang > 0){
+        vl = omega*(D + error - 14/2) + 0.5*(D + error - dist) + 10*(math.pi/2 - anchor.ang)
+        vr = omega*(D + error + 14/2) - 0.5*(D + error - dist) - 10*(math.pi/2 - anchor.ang)
+    }
+    else{
+        vl = omega*(D + error + 14/2) - 0.5*(D + error - dist) + 10*(-math.pi/2 - anchor.ang)
+        vr = omega*(D + error - 14/2) + 0.5*(D + error - dist) - 10*(-math.pi/2 - anchor.ang)
+    }
+    set_wheels(vl, vr)
+}
+
+
+# Lennard-Jones interaction magnitude
+function lj_magnitude(dist, target, epsilon) {
+    return -(epsilon / dist) * ((target / dist)^4 - (target / dist)^2)
+}
+
+# Neighbor data to LJ interaction vector
+function lj_vector(rid, data) {
+    return {
+        .x = lj_magnitude(data.distance, D + error, EPSILON) * math.cos(data.azimuth),
+        .y = lj_magnitude(data.distance, D + error, EPSILON) * math.sin(data.azimuth)
+    }
+}
+
+# Accumulator of neighbor LJ interactions
+function lj_sum(rid, data, accum) {
+    return {
+        .x = data.x + accum.x,
+        .y = data.y + accum.y
+    }
+}
+
+
+# Calculates and actuates the flocking interaction
+function hexagon() {
+    # Calculate accumulator
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+    var accum = neighbors.map(lj_vector).reduce(lj_sum, v)
+    if(neighbors.count() > 0){
+        accum.x = accum.x * 1.0 / neighbors.count()
+        accum.y = accum.y * 1.0 / neighbors.count()
+    }
+    # Move according to vector
+    goto(accum.x, accum.y)
+
+}
+
+function findSheep(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    nk = ""
+    neighbors.nonkin().foreach(function(robot_id, sheep){
+        v.x = sheep.distance * math.cos(sheep.azimuth)
+        v.y = sheep.distance * math.sin(sheep.azimuth)
+
+        norm = math.sqrt(v.x^2 + v.y^2)
+        debug.print(norm)
+
+        if(norm < D + error){
+            state = "found"
+            set_wheels(0.0, 0.0)
+        }
+        nk = string.concat(nk, string.tostring(robot_id), " ")
+    })
+    debug.print(nk)
+}
+
+function cluster(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.kin().foreach(function(robot_id, sheep){
+        v.x = v.x + sheep.distance * math.cos(sheep.azimuth)
+        v.y = v.y + sheep.distance * math.sin(sheep.azimuth)
+    })
+
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(neighbors.count() > 0){
+        v.x = v.x / neighbors.count()
+        v.y = v.y / neighbors.count()
+        norm = norm / neighbors.count()
+    }
+
+    if (norm > d){
+        goto(v.x, v.y)
+        debug.rays.add(0, 140, 0, v.x/100, v.y/100, 1.0)
+    }
+    else{
+        set_wheels(math.rng.uniform(0.0, 20.0), math.rng.uniform(-20.0, 0.0))
+    }
+}
+
+function avoidObstacles(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    i = 0
+    while(i < 8){
+        v.x = v.x + proximity[i].value * math.cos(proximity[i].angle)
+        v.y = v.y + proximity[i].value * math.sin(proximity[i].angle)
+        i = i + 1
+    }
+
+    # if norm of v is less than threshold continue straight, otherwise turn away
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(norm > 0.8 and (proximity[0].value > 0 or proximity[7].value > 0 or proximity[1].value > 0)){
+        set_wheels(5.0, -5.0)
+    }
+}
+
+function avoidShepherds(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.nonkin().foreach(function(robot_id, shepherd){
+        shepX = shepherd.distance * math.cos(shepherd.azimuth)
+        shepY = shepherd.distance * math.sin(shepherd.azimuth)
+
+        norm = math.sqrt(shepX^2 + shepY^2)
+
+        if(norm < D){
+#            debug.print(norm)
+            v.x = v.x + shepX
+            v.y = v.y + shepY
+        }
+    })
+
+    if(v.x != 0 and v.y != 0){
+        goto(-v.x, -v.y)
+    }
+}
+
+
+############# MOVING TO PEN ################
+
+
+
+############################################
+
+
+
+# This function is executed when you press the reset button
+function reset() {
+    shepherds = swarm.create(0)
+    shepherds.select(id >= 20)
+    sheep = shepherds.others(1)
+    shepherds.exec(function(){
+        state = "searching"
+    })
+
+    io.fclose(file)
+}
+
+# This function is executed once when you close the simulator
+function destroy() {
+    io.fclose(file)
+}

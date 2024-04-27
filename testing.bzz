@@ -1,0 +1,233 @@
+
+# This function is executed once at init time
+function init() {
+    D = 50
+    d = 20
+    EPSILON = 500.0
+    anchor = {
+        .x = 0,
+        .y = 0,
+        .ang = 0
+    }
+
+    math.rng.setseed(id)
+
+    shepherds = swarm.create(0)
+    shepherds.select((id % 3) == 0)
+    sheep = shepherds.others(1)
+
+    shepherds.exec(function(){
+        state = {
+            .search = "search",
+            .n_det = "n_det",
+            .found = "found"
+        }
+
+        var anchor_norm = 10000
+    })
+
+    sheep.exec(function(){
+        set_leds(255, 255, 255)
+    })
+}
+
+# This function is executed at each time step
+# The main loop is controller by ARGoS
+function step() {
+    shepherds.exec(shepherdStateMachine)
+    sheep.exec(sheepControl)
+}
+
+function shepherdStateMachine() {
+    
+    s = "search"
+    if (state[s] == s){
+        debug.print("Absolute")
+    }
+
+}
+
+function shepherdControl() {
+    debug.print(state)
+    if(state == "searching"){
+        set_wheels(10.0, 10.0)
+        findSheep()
+        avoidObstacles()
+    }
+    if(state == "neighbor detection"){
+        findSpace()
+        avoidObstacles()
+    }
+    if(state == "found"){
+        hexagon()
+        neighbors.broadcast("sheep found", 0)
+    }
+
+}
+
+function sheepControl() {
+    # clustering
+    cluster()
+    # obstacle avoidance
+    avoidObstacles()
+    # shepherd avoidance
+    avoidShepherds()
+}
+
+function findSpace(){
+    findSheep()
+    gravityMovement()
+}
+
+function gravityMovement(){
+    omega = 0.3
+
+    if(anchor.ang > 0){
+        set_wheels(omega*(D - 14/2), omega*(D + 14/2))
+    }
+    else{
+        set_wheels(omega*(D + 14/2), omega*(D - 14/2))
+    }
+
+    debug.print(anchor.ang)
+
+}
+
+# Lennard-Jones interaction magnitude
+function lj_magnitude(dist, target, epsilon) {
+    return -(epsilon / dist) * ((target / dist)^4 - (target / dist)^2)
+}
+
+# Neighbor data to LJ interaction vector
+function lj_vector(rid, data) {
+    return {
+        .x = lj_magnitude(data.distance, D, EPSILON) * math.cos(data.azimuth),
+        .y = lj_magnitude(data.distance, D, EPSILON) * math.sin(data.azimuth)
+    }
+}
+
+# Accumulator of neighbor LJ interactions
+function lj_sum(rid, data, accum) {
+    return {
+        .x = data.x + accum.x,
+        .y = data.y + accum.y
+    }
+}
+
+# Calculates and actuates the flocking interaction
+function hexagon() {
+    # Calculate accumulator
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+    var accum = neighbors.map(lj_vector).reduce(lj_sum, v)
+    if(neighbors.count() > 0){
+        accum.x = accum.x * 1.0 / neighbors.count()
+        accum.y = accum.y * 1.0 / neighbors.count()
+    }
+    # Move according to vector
+    goto(accum.x, accum.y)
+
+}
+
+function findSheep(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.nonkin().foreach(function(robot_id, sheep){
+        v.x = sheep.distance * math.cos(sheep.azimuth)
+        v.y = sheep.distance * math.sin(sheep.azimuth)
+
+        norm = math.sqrt(v.x^2 + v.y^2)
+        debug.print(norm)
+
+        if(norm < D){
+            state = "found"
+            set_wheels(0.0, 0.0)
+        }
+    })
+}
+
+function cluster(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.kin().foreach(function(robot_id, sheep){
+        v.x = v.x + sheep.distance * math.cos(sheep.azimuth)
+        v.y = v.y + sheep.distance * math.sin(sheep.azimuth)
+    })
+
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(neighbors.count() > 0){
+        v.x = v.x / neighbors.count()
+        v.y = v.y / neighbors.count()
+        norm = norm / neighbors.count()
+    }
+
+    if (norm > d){
+        goto(v.x, v.y)
+        debug.rays.add(0, 140, 0, v.x/100, v.y/100, 1.0)
+    }
+    else{
+        set_wheels(math.rng.uniform(0.0, 20.0), math.rng.uniform(-20.0, 0.0))
+    }
+}
+
+function avoidObstacles(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    i = 0
+    while(i < 8){
+        v.x = v.x + proximity[i].value * math.cos(proximity[i].angle)
+        v.y = v.y + proximity[i].value * math.sin(proximity[i].angle)
+        i = i + 1
+    }
+
+    # if norm of v is less than threshold continue straight, otherwise turn away
+    norm = math.sqrt(v.x^2 + v.y^2)
+
+    if(norm > 0.8 and (proximity[0].value > 0 or proximity[7].value > 0 or proximity[1].value > 0)){
+        set_wheels(5.0, -5.0)
+    }
+}
+
+function avoidShepherds(){
+    var v = {
+        .x = 0,
+        .y = 0
+    }
+
+    neighbors.nonkin().foreach(function(robot_id, shepherd){
+        shepX = shepherd.distance * math.cos(shepherd.azimuth)
+        shepY = shepherd.distance * math.sin(shepherd.azimuth)
+
+        norm = math.sqrt(shepX^2 + shepY^2)
+
+        if(norm < D){
+            debug.print(norm)
+            v.x = v.x + shepX
+            v.y = v.y + shepY
+        }
+    })
+
+    if(v.x != 0 and v.y != 0){
+        goto(-v.x, -v.y)
+    }
+}
+
+# This function is executed when you press the reset button
+function reset() {
+}
+
+# This function is executed once when you close the simulator
+function destroy() {
+}
