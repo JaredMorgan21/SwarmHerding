@@ -224,6 +224,10 @@ function step() {
         shepherds.exec(shepherdControl)
         sheep.exec(sheepControl)
     }
+
+    if (state == "dead"){
+        destroy()
+    }
     count = count + 1
 }
 
@@ -501,5 +505,5 @@ function reset() {
 
 # This function is executed once when you close the simulator
 function destroy() {
-    io.fclose(file)
+    
 }
